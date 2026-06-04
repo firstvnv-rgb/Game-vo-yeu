@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Siêu Game Hứng Vợ Pro 2026</title>
+    <style>
+        * {
+            box-sizing: border-box; margin: 0; padding: 0;
+            user-select: none; -webkit-user-select: none;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #gameContainer {
+            position: relative; width: 100vw; height: 100vh;
+            max-width: 450px; max-height: 800px;
+            background: #0f0c1b; box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+            overflow: hidden; border: 2px solid #ff4081; border-radius: 16px;
+        }
+        #canvas { display: block; background: linear-gradient(to bottom, #1f1c2c, #928dab); }
+        #ui {
+            position: absolute; top: 15px; left: 15px; right: 15px;
+            display: flex; flex-direction: column; gap: 5px;
+            font-size: 16px; font-weight: bold; color: #fff;
+            pointer-events: none; text-shadow: 1px 1px 4px rgba(0,0,0,0.8);
+            z-index: 5;
+        }
+        .ui-row { display: flex; justify-content: space-between; width: 100%; }
+        #statusEffects { color: #ffeb3b; font-size: 14px; text-align: center; font-style: italic; }
+        #gameOverScreen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 12, 27, 0.9);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; opacity: 0; pointer-events: none;
+            transition: opacity 0.3s ease; z-index: 10;
+        }
+        #gameOverScreen.show { opacity: 1; pointer-events: auto; }
+        #gameOverScreen h1 { font-size: 36px; margin-bottom: 10px; color: #ff4081; text-shadow: 0 0 10px #ff4081; }
+        #gameOverScreen p { font-size: 18px; margin-bottom: 25px; text-align: center; padding: 0 20px; line-height: 1.5; }
+        #restartBtn {
+            padding: 14px 35px; font-size: 18px; font-weight: bold;
+            background: linear-gradient(45deg, #ff4081, #e040fb); color: white; border: none;
+            border-radius: 30px; cursor: pointer; box-shadow: 0 5px 15px rgba(255,64,129,0.4);
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <div id="ui">
+        <div class="ui-row">
+            <div id="scoreBoard">Điểm: 0</div>
+            <div id="comboBoard">Combo: x0</div>
+        </div>
+        <div class="ui-row">
+            <div id="livesBoard">Mạng: ❤️❤️❤️</div>
+            <div id="highScoreBoard">Kỷ lục: 0</div>
+        </div>
+        <div id="statusEffects"></div>
+    </div>
+    
+    <div id="gameOverScreen">
+        <h1>GAME OVER</h1>
+        <p id="gameOverMsg"></p>
+        <button id="restartBtn" onclick="resetGame()">Thử Thách Lại</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const comboBoard = document.getElementById('comboBoard');
+    const livesBoard = document.getElementById('livesBoard');
+    const highScoreBoard = document.getElementById('highScoreBoard');
+    const statusEffects = document.getElementById('statusEffects');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const gameOverMsg = document.getElementById('gameOverMsg');
+    const container = document.getElementById('gameContainer');
+
+    canvas.width = container.clientWidth || window.innerWidth;
+    canvas.height = container.clientHeight || window.innerHeight;
+
+    let score = 0;
+    let highScore = localStorage.getItem('highScore') || 0;
+    highScoreBoard.innerText = "Kỷ lục: " + highScore;
+    let lives = 3;
+    let combo = 0;
+    let gameOver = false;
+    
+    let baseSpeed = 3.5;
+    let spawnRate = 0.025;
+    let items = [];
+    let floatingTexts = [];
+
+    let invertedControls = false;
+    let doublePoints = false;
+    let invertedTimer = 0;
+    let doublePointsTimer = 0;
+
+    // SỬA ĐƯỜNG DẪN ẢNH THEO ĐÚNG ĐUÔI FILE TRÊN GITHUB CỦA BẠN
+    const husbandImg = new Image();
+    husbandImg.src = 'chong.png.heic'; 
+
+    const wifeImg = new Image();
+    wifeImg.src = 'vo.png.heic'; 
+
+    // Nhân vật Mạnh Hùng ở dưới đáy
+    const husband = {
+        width: 75,
+        height: 75,
+        x: canvas.width / 2 - 37.5,
+        y: canvas.height - 110,
+        targetX: canvas.width / 2 - 37.5
+    };
+
+    const ITEM_TYPES = {
+        WIFE: { emoji: "", label: "Vũ Hiền", weight: 0.65, color: "#ff4081" },
+        BOMB: { emoji: "💣", label: "Bom", weight: 0.15, color: "#ff1744" },
+        BEER: { emoji: "🍺", label: "Say Rượu", weight: 0.10, color: "#ffc107" },
+        STAR: { emoji: "⭐", label: "X2 Điểm", weight: 0.10, color: "#00e676" }
+    };
+
+    window.addEventListener('touchmove', function(e) {
+        if (gameOver) return;
+        let rect = canvas.getBoundingClientRect();
+        let touchX = e.touches[0].clientX - rect.left;
+        
+        if (invertedControls) {
+            let deltaX = touchX - canvas.width / 2;
+            husband.targetX = (canvas.width / 2) - deltaX - husband.width / 2;
+        } else {
+            husband.targetX = touchX - husband.width / 2;
+        }
+    }, { passive: true });
+
+    function createFloatingText(text, x, y, color) {
+        floatingTexts.push({ text, x, y, color, opacity: 1, vY: -1 });
+    }
+
+    function spawnItem() {
+        if (Math.random() < spawnRate) {
+            let rand = Math.random();
+            let type;
+            
+            if (rand < ITEM_TYPES.WIFE.weight) type = 'WIFE';
+            else if (rand < ITEM_TYPES.WIFE.weight + ITEM_TYPES.BOMB.weight) type = 'BOMB';
+            else if (rand < ITEM_TYPES.WIFE.weight + ITEM_TYPES.BOMB.weight + ITEM_TYPES.BEER.weight) type = 'BEER';
+            else type = 'STAR';
+
+            let x = Math.random() * (canvas.width - 50) + 5;
+            let speedMod = baseSpeed + (Math.random() * 1.5);
+            items.push({ x: x, y: -60, size: 45, type: type, speed: speedMod });
+        }
+    }
+
+    function updateTimers() {
+        if (invertedControls) {
+            invertedTimer--;
+            if (invertedTimer <= 0) {
+                invertedControls = false;
+                createFloatingText("Hết tỉnh táo!", husband.x + 37, husband.y, "#ffc107");
+            }
+        }
+        if (doublePoints) {
+            doublePointsTimer--;
+            if (doublePointsTimer <= 0) {
+                doublePoints = false;
+                createFloatingText("Hết X2!", husband.x + 37, husband.y, "#00e676");
+            }
+        }
+
+        let statusText = "";
+        if (invertedControls) statusText += `🥴 Đảo ngược phím (${Math.ceil(invertedTimer/60)}s) `;
+        if (doublePoints) statusText += `🔥 X2 Điểm (${Math.ceil(doublePointsTimer/60)}s)`;
+        statusEffects.innerText = statusText;
+    }
+
+    function gameLoop() {
+        if (!gameOver) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            updateTimers();
+
+            husband.x += (husband.targetX - husband.x) * 0.25;
+            if (husband.x < 0) husband.x = 0;
+            if (husband.x > canvas.width - husband.width) husband.x = canvas.width - husband.width;
+
+            // 1. Vẽ Mạnh Hùng
+            try {
+                ctx.drawImage(husbandImg, husband.x, husband.y, husband.width, husband.height);
+            } catch (e) {
+                ctx.beginPath(); ctx.arc(husband.x + 37.5, husband.y + 37.5, 30, 0, Math.PI * 2);
+                ctx.fillStyle = "#ffffff"; ctx.fill();
+            }
+            ctx.font = "bold 12px sans-serif";
+            ctx.fillStyle = invertedControls ? "#ffc107" : "#ffffff";
+            ctx.textAlign = "center";
+            ctx.fillText("Mạnh Hùng", husband.x + 37.5, husband.y + husband.height + 15);
+
+            spawnItem();
+
+            // 2. Vòng lặp các vật phẩm rơi
+            for (let i = items.length - 1; i >= 0; i--) {
+                let item = items[i];
+                item.y += item.speed;
+                let currentType = ITEM_TYPES[item.type];
+
+                if (item.type === 'WIFE') {
+                    // Vẽ Vũ Hiền
+                    try {
+                        ctx.drawImage(wifeImg, item.x, item.y, item.size, item.size);
+                    } catch (e) {
+                        ctx.font = "35px sans-serif"; ctx.fillText("👰‍♀️", item.x + 20, item.y + 30);
+                    }
+                } else {
+                    ctx.font = "35px sans-serif";
+                    ctx.fillText(currentType.emoji, item.x + 5, item.y + 30);
+                }
+
+                ctx.font = "bold 11px sans-serif";
+                ctx.fillStyle = currentType.color;
+                ctx.fillText(currentType.label, item.x + 22, item.y + 52);
+
+                if (item.y + item.size >= husband.y && 
+                    item.y <= husband.y + husband.height &&
+                    item.x + item.size >= husband.x && 
+                    item.x <= husband.x + husband.width) {
+                    
+                    if (item.type === 'WIFE') {
+                        combo++;
+                        let comboBonus = Math.floor(combo / 5) + 1;
+                        let pointsGained = (doublePoints ? 2 : 1) * comboBonus;
+                        score += pointsGained;
+                        
+                        createFloatingText(`+${pointsGained} Điểm ${combo > 4 ? '(Combo!)' : ''}`, item.x, husband.y - 10, "#ff4081");
+                        
+                        if (score % 10 === 0) {
+                            baseSpeed += 0.3; spawnRate += 0.002;
+                        }
+                    } 
+                    else if (item.type === 'BOMB') {
+                        lives--; combo = 0;
+                        createFloatingText("-1 ❤️ Giận nha!", item.x, husband.y - 10, "#ff1744");
+                        updateLivesDisplay();
+                    } 
+                    else if (item.type === 'BEER') {
+                        invertedControls = true; invertedTimer = 300;
+                        createFloatingText("🥴 Say quá đảo phím rồi!", item.x, husband.y - 10, "#ffc107");
+                    } 
+                    else if (item.type === 'STAR') {
+                        doublePoints = true; doublePointsTimer = 420;
+                        createFloatingText("🔥 X2 ĐIỂM!", item.x, husband.y - 10, "#00e676");
+                    }
+
+                    scoreBoard.innerText = "Điểm: " + score;
+                    comboBoard.innerText = "Combo: x" + combo;
+                    items.splice(i, 1);
+
+                    if (lives <= 0) endGame();
+                    continue;
+                }
+
+                if (item.y > canvas.height) {
+                    if (item.type === 'WIFE') {
+                        combo = 0;
+                        comboBoard.innerText = "Combo: x" + combo;
+                        createFloatingText("Hụt vợ rồi!", item.x, canvas.height - 25, "#aaa");
+                    }
+                    items.splice(i, 1);
+                }
+            }
+
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let ft = floatingTexts[i];
+                ft.y += ft.vY; ft.opacity -= 0.02;
+                ctx.font = "bold 14px sans-serif";
+                ctx.fillStyle = ft.color;
+                ctx.globalAlpha = ft.opacity;
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.globalAlpha = 1.0;
+                if (ft.opacity <= 0) floatingTexts.splice(i, 1);
+            }
+        }
+        requestAnimationFrame(gameLoop);
+    }
+
+    function updateLivesDisplay() {
+        let heartStr = "Mạng: ";
+        for(let i=0; i<3; i++) heartStr += (i < lives) ? "❤️" : "🖤";
+        livesBoard.innerText = heartStr;
+    }
+
+    function endGame() {
+        gameOver = true;
+        if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('highScore', highScore);
+            highScoreBoard.innerText = "Kỷ lục: " + highScore;
+            gameOverMsg.innerHTML = "👑 KỶ LỤC MỚI! 👑<br>Bạn đón được vợ xuất sắc " + score + " lần, xứng đáng điểm 10 không có nhưng!";
+        } else {
+            gameOverMsg.innerHTML = "GAME OVER!<br>Lần sau tập trung hứng vợ khéo hơn nhé!<br>Điểm đạt được: " + score;
+        }
+        gameOverScreen.classList.add('show');
+    }
+
+    function resetGame() {
+        score = 0; lives = 3; combo = 0; baseSpeed = 3.5; spawnRate = 0.025;
+        items = []; floatingTexts = []; invertedControls = false; doublePoints = false;
+        gameOver = false;
+        scoreBoard.innerText = "Điểm: 0"; comboBoard.innerText = "Combo: x0";
+        updateLivesDisplay();
+        gameOverScreen.classList.remove('show');
+    }
+
+    gameLoop();
+</script>
+
+</body>
+</html>
